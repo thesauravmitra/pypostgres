@@ -20,8 +20,8 @@ def _psql(command, header=False, psql_action=None, out_action='quiet', inpath=No
     C = command
 
   sys_C = "psql -U postgres -c \"%s\"" % C
-  sys_output = _system.call(sys_C, out_action=out_action, inpath=inpath, progress_bar=progress_bar)
+  sys_output = _system._call(sys_C, out_action=out_action, inpath=inpath, progress_bar=progress_bar)
 
   if psql_action == 'query' and psql_arg == None:
-    return _system.read_log(psql_arg)
+    return _system._read_log(psql_arg)
   return sys_output

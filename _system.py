@@ -1,13 +1,13 @@
 import os
 
-def read_log(logpath):
+def _read_log(logpath):
   f = open(logpath)
   output = f.read()
   f.close()
   os.system("rm %s" % logpath)
   return output.strip().split("\n")
 
-def call(command, out_action='quiet', in_path=None, progress_bar=False):
+def _call(command, out_action='quiet', in_path=None, progress_bar=False):
   logpath='.log'
   try:
     out_action, out_arg = out_action
@@ -37,4 +37,4 @@ def call(command, out_action='quiet', in_path=None, progress_bar=False):
   if status != 0:
     raise Exception(status)
   if out_action == "return":
-    return read_log(logpath)
+    return _read_log(logpath)
