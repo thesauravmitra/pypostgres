@@ -1,3 +1,7 @@
+import os
+import re
+import uuid
+
 from postgres._psql import _psql
 from postgres._system import _call
 
@@ -43,6 +47,10 @@ def load(filepath, preserve=True, verbosity=0):
   return Table(table_name, preserve=preserve, verbosity=verbosity)
 
 class Table:
+  @staticmethod
+  def __new_name():
+    return "table_"+str(uuid.uuid4()).replace("-","_")
+
   def _print_columns(self, verbosity):
     _verbose("Columns: %d" % len(self.columns), 2, verbosity=verbosity)
 
@@ -75,3 +83,257 @@ class Table:
     """ % (self.table_schema, self.table_name)
     self.columns = _psql(C, output=True)
     self._print_columns(verbosity=verbosity)
+
+  def __del__(self):
+    if not self.preserve:
+      try:
+        if not self.renamed:
+          t = self.full_table_name
+          C = "drop table %s;" % t
+          _psql(C)
+      except Exception as e:
+        print("TableDestructorInterrupt:", e)
+
+  def rename(self, new_name, verbosity=0):
+    _verbose("\trename to: %s" % new_name, 3, verbosity=verbosity)
+    ft = self.full_table_name
+    t = self.table_name
+    C = """
+      drop table if exists %s;
+      alter table %s set schema public;
+      alter table %s rename to %s;
+    """ % (new_name, ft, t, new_name)
+    _psql(C)
+    self.renamed = True
+
+  def copy_to(self, new_name, table_schema=None, verbosity=0):
+    _verbose("\tcopy to: %s" % new_name, 3, verbosity=verbosity)
+    ft = self.full_table_name
+    if table_schema == None:
+      table_schema = self.table_schema
+    nt = "%s.%s" % (table_schema, new_name)
+    C = """
+      drop table if exists %s;
+      select * into %s from %s;
+    """ % (nt, nt, ft)
+    _psql(C)
+
+    return Table(new_name, table_schema=table_schema, rows=self.rows, verbosity=verbosity)
+
+  def write_to(self, filepath, verbosity=0):
+    _verbose("\twrite", 3, verbosity=verbosity)
+    C = "select * from %s;" % self.full_table_name
+    _psql(C, header=True, output_path=filepath)
+
+  def match_columns(self, *patterns, verbosity=0):
+    match = []
+    for c in self.columns:
+      is_match = False
+      for pattern in patterns:
+        if re.match(pattern, c):
+          is_match = True
+          break
+      if is_match:
+        match.append(c)
+    return match
+
+  def outer_join(self, other, key, drop_columns=None, verbosity=0):
+    _verbose("\tjoin", 3, verbosity=verbosity)
+
+    t1 = self.full_table_name
+    t2 = other.full_table_name
+    new_table_name = Table.__new_name()
+    nt = other.table_schema + "." + new_table_name
+
+    select = "*"
+    if drop_columns != None and len(drop_columns) > 0:
+      all_columns = list(set(self.columns + other.columns) - set(drop_columns))
+      all_columns += ['%s.%s as %s' % (t1, c, c) for c in drop_columns]
+      all_columns = ['"%s"' % c for c in all_columns]
+      select = ",".join(all_columns)
+
+    conditions = ",".join(['"%s"' % col for col in key])
+    C = """
+      select %s into %s
+      from
+        %s full outer join %s using(%s);
+    """ % (select, nt, t1, t2, conditions)
+    output = _psql(C, stdout=True)
+    rows = int(output[0].split()[-1])
+
+    return Table(new_table_name, rows=rows, verbosity=verbosity)
+
+  def where(self, condition, verbosity=0):
+    _verbose("\twhere", 3, verbosity=verbosity)
+    t = self.full_table_name
+    new_table_name = Table.__new_name()
+    nt = self.table_schema + "." + new_table_name
+
+    C = "select * into %s from %s where %s;" % (nt, t, condition)
+    output = _psql(C, stdout=True)
+    rows = int(output[0].split()[-1])
+
+    return Table(new_table_name, rows=rows, verbosity=verbosity)
+
+  def drop_columns(self, columns, verbosity=0):
+    _verbose("\tdrop", 3, verbosity=verbosity)
+    t = self.full_table_name
+    new_table_name = Table.__new_name()
+    nt = self.table_schema + "." + new_table_name
+
+    selects = ['"%s"' % c for c in self.columns if not c in columns]
+    assert len(selects) == len(self.columns) - len(columns)
+    selects = ",".join(selects)
+
+    C = "select %s into %s from %s;" % (selects, nt, t)
+    _psql(C)
+
+    return Table(new_table_name, rows=self.rows, verbosity=verbosity)
+
+  def drop_columns_inplace(self, columns, verbosity=0):
+    _verbose("\tdrop inplace", 3, verbosity=verbosity)
+    if len(columns) == 0:
+      return
+    columns = set([c for c in columns if c in self.columns])
+    t = self.full_table_name
+
+    drops = ['drop column "%s"' % c for c in columns]
+    drops = ",".join(drops)
+
+    C = "alter table %s %s;" % (t, drops)
+    _psql(C)
+    self.columns = [c for c in self.columns if not c in columns]
+    self._print_columns(verbosity=verbosity)
+
+  def dropna_columns_inplace(self, threshold=0, columns=None, verbosity=0):
+    _verbose("\tdrop empty columns", 3, verbosity=verbosity)
+    threshold = 1 - threshold
+    if self.rows == 0:
+      return
+    if columns == None:
+      columns = self.columns
+    valid_counts = self.valid_counts(columns=self.columns, verbosity=min(verbosity, 2))
+    valid_ps = [float(vc) / self.rows for vc in valid_counts]
+    column_valid_counts = {}
+    for i, valid_p in enumerate(valid_ps):
+      column_name = self.columns[i]
+      column_valid_counts[column_name] = valid_p
+
+    def get_invalid_columns():
+      return [c for c in column_valid_counts if column_valid_counts[c] < threshold]
+
+    invalid_columns = get_invalid_columns()
+    self.drop_inplace(invalid_columns, verbosity=min(verbosity, 2))
+    remaining_null_columns =  [c for c in column_valid_counts if column_valid_counts[c] != 1 and not c in invalid_columns]
+    _verbose("Remaining null columns: %d" % len(remaining_null_columns), 2, verbosity=verbosity)
+    return remaining_null_columns
+
+  def dropna_inplace(self, columns=None, verbosity=0):
+    _verbose("\tdropna", 3, verbosity=verbosity)
+    t = self.full_table_name
+
+    if columns == None:
+      C = "delete from %s as t where not(t is not null)" % t
+    else:
+      conditions = " or ".join(['%s is null' % c for c in columns])
+      C = "delete from %s where %s" % (t, conditions)
+    output = _psql(C, stdout=True)
+    dropped_rows = int(output[0].split()[-1])
+    self.rows = self.rows - dropped_rows
+    self._print_rows(verbosity=verbosity)
+
+  def fillna(self, value, verbosity=0):
+    _verbose("\tfill", 3, verbosity=verbosity)
+    t = self.full_table_name
+    new_table_name = Table.__new_name()
+    nt = self.table_schema + "." + new_table_name
+
+    coalesce = lambda c: 'coalesce("%s", \'%s\') as "%s"' % (c, value, c)
+    fills = ",".join([coalesce(c) for c in self.columns])
+    C = "select %s into %s from %s;" % (fills, nt, t)
+    output = _psql(C, stdout=True)
+    rows = int(output[0].split()[-1])
+
+    return Table(new_table_name, rows=rows, verbosity=verbosity)
+
+  def replace_with_na(self, value, columns=None, verbosity=0):
+    _verbose("\treplace with null", 3, verbosity=verbosity)
+    if columns == None:
+      columns = self.columns
+
+    t = self.full_table_name
+    new_table_name = Table.__new_name()
+    nt = self.table_schema + "." + new_table_name
+
+    replace = lambda c: 'nullif("%s", \'%s\') as "%s"' % (c, value, c) if c in columns else '"%s"' % c
+    selects = ",".join([replace(c) for c in self.columns])
+
+    C = "select %s into %s from %s;" % (selects, nt, t)
+    _psql(C)
+
+    return Table(new_table_name, rows=self.rows, verbosity=verbosity)
+
+  def replace_inplace(self, old_value, new_value, columns=None, regex=False, full_match=True, verbosity=0):
+    _verbose("\treplace", 3, verbosity=verbosity)
+
+    if columns == None:
+      columns = self.columns
+
+    if new_value == None:
+      new_value = 'default'
+    else:
+      new_value = "'%s'" % new_value
+
+    if regex:
+      if full_match:
+        old_value = "^%s$" % old_value
+      compare = '~'
+    else:
+      compare = '='
+
+    if old_value == None:
+      compare = ''
+      old_value = "is null"
+    else:
+      old_value = "'%s'" % old_value
+
+    t = self.full_table_name
+    for i, c in enumerate(columns):
+      C = """
+        update %s set %s = %s where %s %s %s;
+      """ % (t, c, new_value, c, compare, old_value)
+      _verbose('%d %s' % (i, C.strip()), 3, verbosity=verbosity)
+      _psql(C)
+
+  def trim(self, columns=None, verbosity=0):
+    _verbose("\ttrim", 3, verbosity=verbosity)
+    if columns == None:
+      columns = self.columns
+
+    t = self.full_table_name
+    new_table_name = Table.__new_name()
+    nt = self.table_schema + "." + new_table_name
+
+    trim = lambda c: 'trim("%s") as "%s"' % (c, c) if c in columns else '"%s"' % c
+    selects = ",".join([trim(c) for c in self.columns])
+
+    C = "select %s into %s from %s;" % (selects, nt, t)
+    _psql(C)
+
+    return Table(new_table_name, rows=self.rows, verbosity=verbosity)
+
+  def count(self, verbosity=0):
+    _verbose("\tcount", 3, verbosity=verbosity)
+    C = "select count(*) from %s;" % self.full_table_name
+    output = _psql(C, stdout=True)
+    return int(output[2].strip())
+
+  def count_valid(self, columns=None, verbosity=0):
+    _verbose("\tvalid count", 3, verbosity=verbosity)
+    if columns == None:
+      C = "select count(*) from %s as t where t is not null;" % self.full_table_name
+    else:
+      counts = ",".join(['count("%s") as %s' % (c, c) for c in columns])
+      C = "select %s from %s;" % (counts, self.full_table_name)
+    output = _psql(C, stdout=True)
+    return [int(s.strip()) for s in output[2].split("|")]
