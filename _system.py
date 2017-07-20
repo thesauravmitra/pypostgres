@@ -10,7 +10,7 @@ def read_log(logpath):
 def call(command, out_action='quiet', in_path=None, progress_bar=False):
   logpath='.log'
   try:
-    out_action, out_arg = out_action.split("|", 1)
+    out_action, out_arg = out_action
   except:
     out_arg = None
 
