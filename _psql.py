@@ -1,4 +1,4 @@
-from postgres import _system
+from pypostgres import _system
 
 def _psql(command, header=False, psql_action=None, out_action='quiet', inpath=None, progress_bar=True):
   command = command.replace('"', '\\"').strip()

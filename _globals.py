@@ -2,8 +2,8 @@ import os
 import re
 import uuid
 
-from postgres._psql import _psql
-from postgres._system import _call
+from pypostgres._psql import _psql
+from pypostgres._system import _call
 
 def _verbose(msg, v_level, verbosity):
   if verbosity >= v_level:
