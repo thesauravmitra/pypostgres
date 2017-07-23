@@ -42,7 +42,7 @@ def load(filepath, preserve=True, verbosity=0):
     create table %s(%s);
     copy %s from stdin with csv header delimiter ',';
   """ % (ft, ft, column_definitions, ft)
-  _psql(C, stdin=filepath)
+  _psql(C, inpath=filepath)
 
   return Table(table_name, preserve=preserve, verbosity=verbosity)
 
@@ -81,7 +81,7 @@ class Table:
         table_schema = '%s' and
         table_name = '%s';
     """ % (self.table_schema, self.table_name)
-    self.columns = _psql(C, output=True)
+    self.columns = tuple(_psql(C, psql_action='query'))
     self._print_columns(verbosity=verbosity)
 
   def __del__(self):
@@ -123,7 +123,7 @@ class Table:
   def write_to(self, filepath, verbosity=0):
     _verbose("\twrite", 3, verbosity=verbosity)
     C = "select * from %s;" % self.full_table_name
-    _psql(C, header=True, output_path=filepath)
+    _psql(C, header=True, psql_action=('query', filepath))
 
   def match_columns(self, *patterns, verbosity=0):
     match = []
@@ -158,7 +158,7 @@ class Table:
       from
         %s full outer join %s using(%s);
     """ % (select, nt, t1, t2, conditions)
-    output = _psql(C, stdout=True)
+    output = _psql(C, out_action='return')
     rows = int(output[0].split()[-1])
 
     return Table(new_table_name, rows=rows, verbosity=verbosity)
@@ -170,7 +170,7 @@ class Table:
     nt = self.table_schema + "." + new_table_name
 
     C = "select * into %s from %s where %s;" % (nt, t, condition)
-    output = _psql(C, stdout=True)
+    output = _psql(C, out_action='return')
     rows = int(output[0].split()[-1])
 
     return Table(new_table_name, rows=rows, verbosity=verbosity)
@@ -202,7 +202,7 @@ class Table:
 
     C = "alter table %s %s;" % (t, drops)
     _psql(C)
-    self.columns = [c for c in self.columns if not c in columns]
+    self.columns = tuple([c for c in self.columns if not c in columns])
     self._print_columns(verbosity=verbosity)
 
   def dropna_columns_inplace(self, threshold=0, columns=None, verbosity=0):
@@ -212,7 +212,7 @@ class Table:
       return
     if columns == None:
       columns = self.columns
-    valid_counts = self.valid_counts(columns=self.columns, verbosity=min(verbosity, 2))
+    valid_counts = self.count_valid(columns=self.columns, verbosity=min(verbosity, 2))
     valid_ps = [float(vc) / self.rows for vc in valid_counts]
     column_valid_counts = {}
     for i, valid_p in enumerate(valid_ps):
@@ -223,7 +223,7 @@ class Table:
       return [c for c in column_valid_counts if column_valid_counts[c] < threshold]
 
     invalid_columns = get_invalid_columns()
-    self.drop_inplace(invalid_columns, verbosity=min(verbosity, 2))
+    self.drop_columns_inplace(invalid_columns, verbosity=min(verbosity, 2))
     remaining_null_columns =  [c for c in column_valid_counts if column_valid_counts[c] != 1 and not c in invalid_columns]
     _verbose("Remaining null columns: %d" % len(remaining_null_columns), 2, verbosity=verbosity)
     return remaining_null_columns
@@ -237,7 +237,7 @@ class Table:
     else:
       conditions = " or ".join(['%s is null' % c for c in columns])
       C = "delete from %s where %s" % (t, conditions)
-    output = _psql(C, stdout=True)
+    output = _psql(C, out_action='return')
     dropped_rows = int(output[0].split()[-1])
     self.rows = self.rows - dropped_rows
     self._print_rows(verbosity=verbosity)
@@ -251,7 +251,7 @@ class Table:
     coalesce = lambda c: 'coalesce("%s", \'%s\') as "%s"' % (c, value, c)
     fills = ",".join([coalesce(c) for c in self.columns])
     C = "select %s into %s from %s;" % (fills, nt, t)
-    output = _psql(C, stdout=True)
+    output = _psql(C, out_action='return')
     rows = int(output[0].split()[-1])
 
     return Table(new_table_name, rows=rows, verbosity=verbosity)
@@ -325,7 +325,7 @@ class Table:
   def count(self, verbosity=0):
     _verbose("\tcount", 3, verbosity=verbosity)
     C = "select count(*) from %s;" % self.full_table_name
-    output = _psql(C, stdout=True)
+    output = _psql(C, out_action='return')
     return int(output[2].strip())
 
   def count_valid(self, columns=None, verbosity=0):
@@ -335,5 +335,5 @@ class Table:
     else:
       counts = ",".join(['count("%s") as %s' % (c, c) for c in columns])
       C = "select %s from %s;" % (counts, self.full_table_name)
-    output = _psql(C, stdout=True)
+    output = _psql(C, out_action='return')
     return [int(s.strip()) for s in output[2].split("|")]

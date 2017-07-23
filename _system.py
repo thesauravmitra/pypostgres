@@ -7,7 +7,7 @@ def _read_log(logpath):
   os.system("rm %s" % logpath)
   return output.strip().split("\n")
 
-def _call(command, out_action='quiet', in_path=None, progress_bar=False):
+def _call(command, out_action='quiet', inpath=None, progress_bar=False):
   logpath='.log'
   try:
     out_action, out_arg = out_action
@@ -24,12 +24,12 @@ def _call(command, out_action='quiet', in_path=None, progress_bar=False):
   else:
     direct_out = ""
 
-  if in_path == None:
+  if inpath == None:
     pipe_in = ""
   elif progress_bar:
-    pipe_in = "pv %s |" % in_path
+    pipe_in = "pv %s |" % inpath
   else:
-    pipe_in = "cat %s |" % in_path
+    pipe_in = "cat %s |" % inpath
 
   command = "%s %s %s" % (pipe_in, command, direct_out)
   code = os.system(command)

@@ -9,6 +9,7 @@ def _psql(command, header=False, psql_action=None, out_action='quiet', inpath=No
     psql_arg = None
 
   if psql_action == 'query':
+    logged_query = psql_arg == None
     if psql_arg == None:
       psql_arg = '.log.csv'
 
@@ -22,6 +23,6 @@ def _psql(command, header=False, psql_action=None, out_action='quiet', inpath=No
   sys_C = "psql -U postgres -c \"%s\"" % C
   sys_output = _system._call(sys_C, out_action=out_action, inpath=inpath, progress_bar=progress_bar)
 
-  if psql_action == 'query' and psql_arg == None:
+  if psql_action == 'query' and logged_query:
     return _system._read_log(psql_arg)
   return sys_output
