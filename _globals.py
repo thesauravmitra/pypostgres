@@ -192,9 +192,9 @@ class Table:
 
   def drop_columns_inplace(self, columns, verbosity=0):
     _verbose("\tdrop inplace", 3, verbosity=verbosity)
+    columns = set([c for c in columns if c in self.columns])
     if len(columns) == 0:
       return
-    columns = set([c for c in columns if c in self.columns])
     t = self.full_table_name
 
     drops = ['drop column "%s"' % c for c in columns]
@@ -242,14 +242,17 @@ class Table:
     self.rows = self.rows - dropped_rows
     self._print_rows(verbosity=verbosity)
 
-  def fillna(self, value, verbosity=0):
+  def fillna(self, value, columns=None, verbosity=0):
     _verbose("\tfill", 3, verbosity=verbosity)
     t = self.full_table_name
     new_table_name = Table.__new_name()
     nt = self.table_schema + "." + new_table_name
 
+    if columns == None:
+      columns = self.columns
+
     coalesce = lambda c: 'coalesce("%s", \'%s\') as "%s"' % (c, value, c)
-    fills = ",".join([coalesce(c) for c in self.columns])
+    fills = ",".join([coalesce(c) if c in columns else c for c in self.columns])
     C = "select %s into %s from %s;" % (fills, nt, t)
     output = _psql(C, out_action='return')
     rows = int(output[0].split()[-1])
