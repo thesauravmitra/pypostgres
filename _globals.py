@@ -5,7 +5,15 @@ import uuid
 from pypostgres._psql import _psql
 from pypostgres._system import _call
 
+global_verbosity=3
+
+def set_global_verbosity(level):
+  global global_verbosity
+  global_verbosity = level
+
 def _verbose(msg, v_level, verbosity):
+  if verbosity == None:
+    verbosity = global_verbosity
   if verbosity >= v_level:
     print(msg)
 
@@ -16,21 +24,25 @@ def clean_imports():
   """
   _psql(C)
 
-def load_fillna(filepath, preserve=True, verbosity=0):
+def load_fillna(filepath, preserve=True, verbosity=None):
+  if verbosity == None:
+    verbosity = global_verbosity
   table_name = os.path.splitext(os.path.basename(filepath))[0].lower()
   C = "drop table if exists import.%s;" % table_name
   _psql(C)
   pgfutter_cmd = """
     pgfutter --user postgres csv '%s'
   """ % filepath
-  output = _call(pgfutter_cmd, tee_pipe="head -n1")
+  output = _call(pgfutter_cmd, out_action=("return", "head -n1"))
   if len(output) == 1:
     raise KeyboardInterrupt
   rows = int(output[-1].split()[0])
 
   return Table(table_name, rows=rows, preserve=preserve, verbosity=verbosity)
 
-def load(filepath, preserve=True, verbosity=0):
+def load(filepath, preserve=True, verbosity=None):
+  if verbosity == None:
+    verbosity = global_verbosity
   _verbose("\tload", 3, verbosity=verbosity)
   table_name = os.path.splitext(os.path.basename(filepath))[0].lower()
   ft = "import.%s" % table_name
@@ -57,7 +69,9 @@ class Table:
   def _print_rows(self, verbosity):
     _verbose("Rows: %d" % self.rows, 1, verbosity=verbosity)
 
-  def __init__(self, table_name, table_schema=None, rows=None, preserve=False, verbosity=0):
+  def __init__(self, table_name, table_schema=None, rows=None, preserve=False, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     self.table_name = table_name
     if table_schema == None:
       table_schema = 'import'
@@ -94,7 +108,9 @@ class Table:
       except Exception as e:
         print("TableDestructorInterrupt:", e)
 
-  def rename(self, new_name, verbosity=0):
+  def rename(self, new_name, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\trename to: %s" % new_name, 3, verbosity=verbosity)
     ft = self.full_table_name
     t = self.table_name
@@ -104,9 +120,14 @@ class Table:
       alter table %s rename to %s;
     """ % (new_name, ft, t, new_name)
     _psql(C)
+    self.table_name = new_name
+    self.table_schema = 'public'
+    self.full_table_name = "%s.%s" % (self.table_schema, self.table_name)
     self.renamed = True
 
-  def copy_to(self, new_name, table_schema=None, verbosity=0):
+  def copy_to(self, new_name, table_schema=None, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\tcopy to: %s" % new_name, 3, verbosity=verbosity)
     ft = self.full_table_name
     if table_schema == None:
@@ -120,12 +141,16 @@ class Table:
 
     return Table(new_name, table_schema=table_schema, rows=self.rows, verbosity=verbosity)
 
-  def write_to(self, filepath, verbosity=0):
+  def write_to(self, filepath, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\twrite", 3, verbosity=verbosity)
     C = "select * from %s;" % self.full_table_name
     _psql(C, header=True, psql_action=('query', filepath))
 
-  def match_columns(self, *patterns, verbosity=0):
+  def match_columns(self, *patterns, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     match = []
     for c in self.columns:
       is_match = False
@@ -137,7 +162,9 @@ class Table:
         match.append(c)
     return match
 
-  def outer_join(self, other, key, drop_columns=None, verbosity=0):
+  def outer_join(self, other, key, drop_columns=None, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\tjoin", 3, verbosity=verbosity)
 
     t1 = self.full_table_name
@@ -147,23 +174,24 @@ class Table:
 
     select = "*"
     if drop_columns != None and len(drop_columns) > 0:
-      all_columns = list(set(self.columns + other.columns) - set(drop_columns))
-      all_columns += ['%s.%s as %s' % (t1, c, c) for c in drop_columns]
-      all_columns = ['"%s"' % c for c in all_columns]
+      common = lambda c: 't1."%s" as "%s"' % (c, c) if c in drop_columns else '"%s"' % c
+      all_columns = [common(c) for c in set(self.columns + other.columns)]
       select = ",".join(all_columns)
 
     conditions = ",".join(['"%s"' % col for col in key])
     C = """
       select %s into %s
       from
-        %s full outer join %s using(%s);
+        %s as t1 full outer join %s as t2 using(%s);
     """ % (select, nt, t1, t2, conditions)
     output = _psql(C, out_action='return')
     rows = int(output[0].split()[-1])
 
     return Table(new_table_name, rows=rows, verbosity=verbosity)
 
-  def where(self, condition, verbosity=0):
+  def where(self, condition, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\twhere", 3, verbosity=verbosity)
     t = self.full_table_name
     new_table_name = Table.__new_name()
@@ -175,7 +203,9 @@ class Table:
 
     return Table(new_table_name, rows=rows, verbosity=verbosity)
 
-  def drop_columns(self, columns, verbosity=0):
+  def drop_columns(self, columns, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\tdrop", 3, verbosity=verbosity)
     t = self.full_table_name
     new_table_name = Table.__new_name()
@@ -190,7 +220,9 @@ class Table:
 
     return Table(new_table_name, rows=self.rows, verbosity=verbosity)
 
-  def drop_columns_inplace(self, columns, verbosity=0):
+  def drop_columns_inplace(self, columns, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\tdrop inplace", 3, verbosity=verbosity)
     columns = set([c for c in columns if c in self.columns])
     if len(columns) == 0:
@@ -205,7 +237,9 @@ class Table:
     self.columns = tuple([c for c in self.columns if not c in columns])
     self._print_columns(verbosity=verbosity)
 
-  def dropna_columns_inplace(self, threshold=0, columns=None, verbosity=0):
+  def dropna_columns_inplace(self, threshold=0, columns=None, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\tdrop empty columns", 3, verbosity=verbosity)
     threshold = 1 - threshold
     if self.rows == 0:
@@ -228,7 +262,9 @@ class Table:
     _verbose("Remaining null columns: %d" % len(remaining_null_columns), 2, verbosity=verbosity)
     return remaining_null_columns
 
-  def dropna_inplace(self, columns=None, verbosity=0):
+  def dropna_inplace(self, columns=None, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\tdropna", 3, verbosity=verbosity)
     t = self.full_table_name
 
@@ -242,7 +278,9 @@ class Table:
     self.rows = self.rows - dropped_rows
     self._print_rows(verbosity=verbosity)
 
-  def fillna(self, value, columns=None, verbosity=0):
+  def fillna(self, value, columns=None, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\tfill", 3, verbosity=verbosity)
     t = self.full_table_name
     new_table_name = Table.__new_name()
@@ -259,7 +297,9 @@ class Table:
 
     return Table(new_table_name, rows=rows, verbosity=verbosity)
 
-  def replace_with_na(self, value, columns=None, verbosity=0):
+  def replace_with_na(self, value, columns=None, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\treplace with null", 3, verbosity=verbosity)
     if columns == None:
       columns = self.columns
@@ -276,7 +316,9 @@ class Table:
 
     return Table(new_table_name, rows=self.rows, verbosity=verbosity)
 
-  def replace_inplace(self, old_value, new_value, columns=None, regex=False, full_match=True, verbosity=0):
+  def replace_inplace(self, old_value, new_value, columns=None, regex=False, full_match=True, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\treplace", 3, verbosity=verbosity)
 
     if columns == None:
@@ -308,7 +350,9 @@ class Table:
       _verbose('%d %s' % (i, C.strip()), 3, verbosity=verbosity)
       _psql(C)
 
-  def trim(self, columns=None, verbosity=0):
+  def trim(self, columns=None, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\ttrim", 3, verbosity=verbosity)
     if columns == None:
       columns = self.columns
@@ -325,13 +369,17 @@ class Table:
 
     return Table(new_table_name, rows=self.rows, verbosity=verbosity)
 
-  def count(self, verbosity=0):
+  def count(self, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\tcount", 3, verbosity=verbosity)
     C = "select count(*) from %s;" % self.full_table_name
     output = _psql(C, out_action='return')
     return int(output[2].strip())
 
-  def count_valid(self, columns=None, verbosity=0):
+  def count_valid(self, columns=None, verbosity=None):
+    if verbosity == None:
+      verbosity = global_verbosity
     _verbose("\tvalid count", 3, verbosity=verbosity)
     if columns == None:
       C = "select count(*) from %s as t where t is not null;" % self.full_table_name
