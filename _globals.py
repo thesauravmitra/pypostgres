@@ -162,7 +162,7 @@ class Table:
         match.append(c)
     return match
 
-  def outer_join(self, other, key, drop_columns=None, verbosity=None):
+  def outer_join(self, other, key, verbosity=None):
     if verbosity == None:
       verbosity = global_verbosity
     _verbose("\tjoin", 3, verbosity=verbosity)
@@ -172,11 +172,13 @@ class Table:
     new_table_name = Table.__new_name()
     nt = other.table_schema + "." + new_table_name
 
+    common_columns = list((set(self.columns) & set(other.columns)) - set(key))
+
     select = "*"
-    if drop_columns != None and len(drop_columns) > 0:
-      common = lambda c: 't1."%s" as "%s"' % (c, c) if c in drop_columns else '"%s"' % c
-      all_columns = [common(c) for c in set(self.columns + other.columns)]
-      select = ",".join(all_columns)
+    if len(common_columns) > 0:
+      common = lambda c: 'coalesce(t1."%s", t2."%s") as "%s"' % (c, c, c) if c in common_columns else '"%s"' % c
+      all_columns = set(self.columns + other.columns)
+      select = ",".join([common(c) for c in all_columns])
 
     conditions = ",".join(['"%s"' % col for col in key])
     C = """
