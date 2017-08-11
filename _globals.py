@@ -255,10 +255,7 @@ class Table:
       column_name = self.columns[i]
       column_valid_counts[column_name] = valid_p
 
-    def get_invalid_columns():
-      return [c for c in column_valid_counts if column_valid_counts[c] < threshold]
-
-    invalid_columns = get_invalid_columns()
+    invalid_columns = [c for c in column_valid_counts if column_valid_counts[c] < threshold]
     self.drop_columns_inplace(invalid_columns, verbosity=min(verbosity, 2))
     remaining_null_columns =  [c for c in column_valid_counts if column_valid_counts[c] != 1 and not c in invalid_columns]
     _verbose("Remaining null columns: %d" % len(remaining_null_columns), 2, verbosity=verbosity)
