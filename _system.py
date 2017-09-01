@@ -31,7 +31,7 @@ def _call(command, out_action='quiet', inpath=None, progress_bar=False):
   else:
     pipe_in = "cat %s |" % inpath
 
-  command = "%s %s %s" % (pipe_in, command, direct_out)
+  command = "%s %s %s" % (pipe_in, command.strip(), direct_out)
   code = os.system(command)
   status = os.WEXITSTATUS(code)
   if status != 0:
