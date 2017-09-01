@@ -125,11 +125,13 @@ class Table:
     C = "select * from %s;" % self.full_table_name
     _psql(C, header=True, psql_action=('query', filepath))
 
-  def match_columns(self, *patterns, verbosity=0):
+  def match_columns(self, *patterns, full_match=True, verbosity=0):
     match = []
     for c in self.columns:
       is_match = False
       for pattern in patterns:
+        if full_match:
+          pattern = "^%s$" % pattern
         if re.match(pattern, c):
           is_match = True
           break
